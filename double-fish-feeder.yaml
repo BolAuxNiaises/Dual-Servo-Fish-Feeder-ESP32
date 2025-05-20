@@ -1,0 +1,570 @@
+esphome:
+  name: double-fish-feeder-3D
+  friendly_name: Double Fish Feeder 3D
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+# Enable logging
+logger:
+  level: DEBUG
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: ""
+
+ota:
+  password: ""
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  
+  # WiFi stability parameters
+  power_save_mode: none
+  fast_connect: true
+  
+  # Backup access point
+  ap:
+    ssid: "Double-Fish-Feeder-3D"
+    password: ""
+
+captive_portal:
+
+# Status sensors
+binary_sensor:
+  - platform: status
+    name: "ESP32 Status"
+    id: wifi_status
+    entity_category: diagnostic
+
+sensor:
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    update_interval: 60s
+    entity_category: diagnostic
+
+  # TDS sensor - Raw ADC reading
+  - platform: adc
+    pin: GPIO34
+    name: "TDS Raw"
+    id: tds_raw
+    update_interval: 10s
+    attenuation: auto
+    unit_of_measurement: ""
+    
+  # TDS sensor - Voltage conversion
+  - platform: template
+    name: "TDS Voltage"
+    id: tds_voltage
+    lambda: |-
+      return id(tds_raw).state * 3.3;
+    update_interval: 10s
+    unit_of_measurement: "V"
+    accuracy_decimals: 3
+    
+  # TDS sensor - Calculated value - Doc sensor https://wiki.keyestudio.com/KS0429_keyestudio_TDS_Meter_V1.0
+  - platform: template
+    name: "TDS"
+    id: tds_value
+    lambda: |-
+      float voltage = id(tds_voltage).state;
+      float temperature = 20.32;
+      
+      float rawTdsValue = (133.42 * pow(voltage, 3) - 255.86 * pow(voltage, 2) + 857.39 * voltage) * 0.5;
+      
+      float k = 1.0 + 0.02 * (temperature - 25.0);
+      float compensatedTdsValue = rawTdsValue * k;
+      
+      float correctedTdsValue = compensatedTdsValue * 0.199;
+      
+      return correctedTdsValue;
+    update_interval: 10s
+    unit_of_measurement: "ppm"
+    accuracy_decimals: 0
+
+# Servo configuration
+servo:
+  - id: servo1
+    output: servo1_output
+    auto_detach_time: 1000ms
+    
+  - id: servo2
+    output: servo2_output
+    auto_detach_time: 1000ms
+
+# PWM outputs for servos
+output:
+  - platform: ledc
+    pin: GPIO13
+    id: servo1_output
+    frequency: 50 Hz
+    max_power: 0.8
+    
+  - platform: ledc
+    pin: GPIO12
+    id: servo2_output
+    frequency: 50 Hz
+    max_power: 0.8
+
+# Global variables
+globals:
+  - id: s1_left
+    type: float
+    restore_value: yes
+    initial_value: '-100.0'
+  - id: s1_center
+    type: float
+    restore_value: yes
+    initial_value: '0.0'
+  - id: s1_right
+    type: float
+    restore_value: yes
+    initial_value: '100.0'
+  - id: s2_left
+    type: float
+    restore_value: yes
+    initial_value: '-100.0'
+  - id: s2_center
+    type: float
+    restore_value: yes
+    initial_value: '0.0'
+  - id: s2_right
+    type: float
+    restore_value: yes
+    initial_value: '100.0'
+  - id: s1_edge_time
+    type: int
+    restore_value: yes
+    initial_value: '500'
+  - id: s2_edge_time
+    type: int
+    restore_value: yes
+    initial_value: '500'
+  - id: s1_center_time
+    type: int
+    restore_value: yes
+    initial_value: '1000'
+  - id: s2_center_time
+    type: int
+    restore_value: yes
+    initial_value: '1000'
+  - id: s1_dir
+    type: bool
+    restore_value: yes
+    initial_value: 'false'
+  - id: s2_dir
+    type: bool
+    restore_value: yes
+    initial_value: 'false'
+
+# Adjustable settings
+number:
+  # Servo position controls
+  - platform: template
+    name: "Servo 1 Position"
+    id: s1_pos
+    min_value: -100
+    max_value: 100
+    step: 1
+    initial_value: 0
+    optimistic: true
+    unit_of_measurement: "%"
+    icon: "mdi:valve"
+    on_value:
+      then:
+        - servo.write:
+            id: servo1
+            level: !lambda 'return x / 100.0;'
+            
+  - platform: template
+    name: "Servo 2 Position"
+    id: s2_pos
+    min_value: -100
+    max_value: 100
+    step: 1
+    initial_value: 0
+    optimistic: true
+    unit_of_measurement: "%"
+    icon: "mdi:valve"
+    on_value:
+      then:
+        - servo.write:
+            id: servo2
+            level: !lambda 'return x / 100.0;'
+            
+  # Servo timing controls
+  - platform: template
+    name: "Servo 1 Edge Delay"
+    id: s1_edge_delay
+    min_value: 100
+    max_value: 2000
+    step: 100
+    initial_value: 500
+    optimistic: true
+    unit_of_measurement: "ms"
+    icon: "mdi:timer"
+    on_value:
+      then:
+        - globals.set:
+            id: s1_edge_time
+            value: !lambda 'return (int)x;'
+    
+  - platform: template
+    name: "Servo 1 Center Delay"
+    id: s1_center_delay
+    min_value: 500
+    max_value: 5000
+    step: 100
+    initial_value: 1000
+    optimistic: true
+    unit_of_measurement: "ms"
+    icon: "mdi:timer"
+    on_value:
+      then:
+        - globals.set:
+            id: s1_center_time
+            value: !lambda 'return (int)x;'
+            
+  - platform: template
+    name: "Servo 2 Edge Delay"
+    id: s2_edge_delay
+    min_value: 100
+    max_value: 2000
+    step: 100
+    initial_value: 500
+    optimistic: true
+    unit_of_measurement: "ms"
+    icon: "mdi:timer"
+    on_value:
+      then:
+        - globals.set:
+            id: s2_edge_time
+            value: !lambda 'return (int)x;'
+    
+  - platform: template
+    name: "Servo 2 Center Delay"
+    id: s2_center_delay
+    min_value: 500
+    max_value: 5000
+    step: 100
+    initial_value: 1000
+    optimistic: true
+    unit_of_measurement: "ms"
+    icon: "mdi:timer"
+    on_value:
+      then:
+        - globals.set:
+            id: s2_center_time
+            value: !lambda 'return (int)x;'
+
+# Feeding scripts
+script:
+  # Double pass for servo 1
+  - id: feed1_double
+    then:
+      - logger.log: "Feeding - Servo 1 - Double pass"
+      # Left
+      - servo.write:
+          id: servo1
+          level: !lambda 'return id(s1_left) / 100.0;'
+      - delay: !lambda 'return id(s1_edge_time);'
+      # Center (opening)
+      - servo.write:
+          id: servo1
+          level: !lambda 'return id(s1_center) / 100.0;'
+      - delay: !lambda 'return id(s1_center_time);'
+      # Right
+      - servo.write:
+          id: servo1
+          level: !lambda 'return id(s1_right) / 100.0;'
+      - delay: !lambda 'return id(s1_edge_time);'
+      # Center (opening)
+      - servo.write:
+          id: servo1
+          level: !lambda 'return id(s1_center) / 100.0;'
+      - delay: !lambda 'return id(s1_center_time);'
+      # Left
+      - servo.write:
+          id: servo1
+          level: !lambda 'return id(s1_left) / 100.0;'
+          
+  # Double pass for servo 2
+  - id: feed2_double
+    then:
+      - logger.log: "Feeding - Servo 2 - Double pass"
+      # Left
+      - servo.write:
+          id: servo2
+          level: !lambda 'return id(s2_left) / 100.0;'
+      - delay: !lambda 'return id(s2_edge_time);'
+      # Center (opening)
+      - servo.write:
+          id: servo2
+          level: !lambda 'return id(s2_center) / 100.0;'
+      - delay: !lambda 'return id(s2_center_time);'
+      # Right
+      - servo.write:
+          id: servo2
+          level: !lambda 'return id(s2_right) / 100.0;'
+      - delay: !lambda 'return id(s2_edge_time);'
+      # Center (opening)
+      - servo.write:
+          id: servo2
+          level: !lambda 'return id(s2_center) / 100.0;'
+      - delay: !lambda 'return id(s2_center_time);'
+      # Left
+      - servo.write:
+          id: servo2
+          level: !lambda 'return id(s2_left) / 100.0;'
+
+  # Single pass for servo 1
+  - id: feed1_single
+    then:
+      - logger.log: "Feeding - Servo 1 - Single pass"
+      # Direction alternates each time
+      - if:
+          condition:
+            lambda: 'return !id(s1_dir);'
+          then:
+            # Left to right
+            - servo.write:
+                id: servo1
+                level: !lambda 'return id(s1_left) / 100.0;'
+            - delay: !lambda 'return id(s1_edge_time);'
+            # Center (opening)
+            - servo.write:
+                id: servo1
+                level: !lambda 'return id(s1_center) / 100.0;'
+            - delay: !lambda 'return id(s1_center_time);'
+            # Right
+            - servo.write:
+                id: servo1
+                level: !lambda 'return id(s1_right) / 100.0;'
+            # Switch direction for next time
+            - globals.set:
+                id: s1_dir
+                value: 'true'
+          else:
+            # Right to left
+            - servo.write:
+                id: servo1
+                level: !lambda 'return id(s1_right) / 100.0;'
+            - delay: !lambda 'return id(s1_edge_time);'
+            # Center (opening)
+            - servo.write:
+                id: servo1
+                level: !lambda 'return id(s1_center) / 100.0;'
+            - delay: !lambda 'return id(s1_center_time);'
+            # Left
+            - servo.write:
+                id: servo1
+                level: !lambda 'return id(s1_left) / 100.0;'
+            # Switch direction for next time
+            - globals.set:
+                id: s1_dir
+                value: 'false'
+
+  # Single pass for servo 2
+  - id: feed2_single
+    then:
+      - logger.log: "Feeding - Servo 2 - Single pass"
+      # Direction alternates each time
+      - if:
+          condition:
+            lambda: 'return !id(s2_dir);'
+          then:
+            # Left to right
+            - servo.write:
+                id: servo2
+                level: !lambda 'return id(s2_left) / 100.0;'
+            - delay: !lambda 'return id(s2_edge_time);'
+            # Center (opening)
+            - servo.write:
+                id: servo2
+                level: !lambda 'return id(s2_center) / 100.0;'
+            - delay: !lambda 'return id(s2_center_time);'
+            # Right
+            - servo.write:
+                id: servo2
+                level: !lambda 'return id(s2_right) / 100.0;'
+            # Switch direction for next time
+            - globals.set:
+                id: s2_dir
+                value: 'true'
+          else:
+            # Right to left
+            - servo.write:
+                id: servo2
+                level: !lambda 'return id(s2_right) / 100.0;'
+            - delay: !lambda 'return id(s2_edge_time);'
+            # Center (opening)
+            - servo.write:
+                id: servo2
+                level: !lambda 'return id(s2_center) / 100.0;'
+            - delay: !lambda 'return id(s2_center_time);'
+            # Left
+            - servo.write:
+                id: servo2
+                level: !lambda 'return id(s2_left) / 100.0;'
+            # Switch direction for next time
+            - globals.set:
+                id: s2_dir
+                value: 'false'
+
+  # Feed both servos with double pass
+  - id: feed_both_double
+    then:
+      - logger.log: "Feeding - Both - Double pass"
+      - script.execute: feed1_double
+      - delay: 2s
+      - script.execute: feed2_double
+
+  # Feed both servos with single pass
+  - id: feed_both_single
+    then:
+      - logger.log: "Feeding - Both - Single pass"
+      - script.execute: feed1_single
+      - delay: 2s
+      - script.execute: feed2_single
+
+# Controls and buttons
+button:
+  # Test positions for Servo 1
+  - platform: template
+    name: "Servo 1 Left"
+    on_press:
+      then:
+        - servo.write:
+            id: servo1
+            level: !lambda 'return id(s1_left) / 100.0;'
+            
+  - platform: template
+    name: "Servo 1 Center"
+    on_press:
+      then:
+        - servo.write:
+            id: servo1
+            level: !lambda 'return id(s1_center) / 100.0;'
+            
+  - platform: template
+    name: "Servo 1 Right"
+    on_press:
+      then:
+        - servo.write:
+            id: servo1
+            level: !lambda 'return id(s1_right) / 100.0;'
+            
+  # Test positions for Servo 2
+  - platform: template
+    name: "Servo 2 Left"
+    on_press:
+      then:
+        - servo.write:
+            id: servo2
+            level: !lambda 'return id(s2_left) / 100.0;'
+            
+  - platform: template
+    name: "Servo 2 Center"
+    on_press:
+      then:
+        - servo.write:
+            id: servo2
+            level: !lambda 'return id(s2_center) / 100.0;'
+            
+  - platform: template
+    name: "Servo 2 Right"
+    on_press:
+      then:
+        - servo.write:
+            id: servo2
+            level: !lambda 'return id(s2_right) / 100.0;'
+            
+  # Feeding buttons
+  - platform: template
+    name: "Feed 1 Double"
+    icon: "mdi:fish"
+    on_press:
+      then:
+        - script.execute: feed1_double
+        
+  - platform: template
+    name: "Feed 1 Single"
+    icon: "mdi:fish"
+    on_press:
+      then:
+        - script.execute: feed1_single
+        
+  - platform: template
+    name: "Feed 2 Double"
+    icon: "mdi:fish"
+    on_press:
+      then:
+        - script.execute: feed2_double
+        
+  - platform: template
+    name: "Feed 2 Single"
+    icon: "mdi:fish"
+    on_press:
+      then:
+        - script.execute: feed2_single
+        
+  - platform: template
+    name: "Feed Both Double"
+    icon: "mdi:fishbowl"
+    on_press:
+      then:
+        - script.execute: feed_both_double
+        
+  - platform: template
+    name: "Feed Both Single"
+    icon: "mdi:fishbowl"
+    on_press:
+      then:
+        - script.execute: feed_both_single
+        
+  # Save position buttons
+  - platform: template
+    name: "Save S1 Left"
+    on_press:
+      then:
+        - lambda: |-
+            id(s1_left) = id(s1_pos).state;
+            
+  - platform: template
+    name: "Save S1 Center"
+    on_press:
+      then:
+        - lambda: |-
+            id(s1_center) = id(s1_pos).state;
+            
+  - platform: template
+    name: "Save S1 Right"
+    on_press:
+      then:
+        - lambda: |-
+            id(s1_right) = id(s1_pos).state;
+            
+  - platform: template
+    name: "Save S2 Left"
+    on_press:
+      then:
+        - lambda: |-
+            id(s2_left) = id(s2_pos).state;
+            
+  - platform: template
+    name: "Save S2 Center"
+    on_press:
+      then:
+        - lambda: |-
+            id(s2_center) = id(s2_pos).state;
+            
+  - platform: template
+    name: "Save S2 Right"
+    on_press:
+      then:
+        - lambda: |-
+            id(s2_right) = id(s2_pos).state;
