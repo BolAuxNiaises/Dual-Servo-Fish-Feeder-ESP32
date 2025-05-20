@@ -18,3 +18,5 @@ KEYESTUDIO TDS v1 sensor
 
 Documentation
 Complete assembly guide, wiring diagrams, and ESPHome configuration are included in this repository.
+
+https://www.printables.com/model/1302182-dual-servo-fish-feeder-with-water-quality-monitori
